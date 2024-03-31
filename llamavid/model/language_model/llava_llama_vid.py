@@ -26,7 +26,12 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from llamavid.model.llamavid_arch import LLaMAVIDMetaModel, LLaMAVIDMetaForCausalLM
 
+import traceback
 
+def print_call_stack():
+    stack_trace = traceback.format_stack()
+    print("Call stack:")
+    print("".join(stack_trace))
 class LlavaConfig(LlamaConfig):
     model_type = "llava"
 
@@ -65,6 +70,8 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, LLaMAVIDMetaForCausalLM):
         prompts: Optional[List[str]] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
+        print('printing llavallamaatt for causalLM ')
+        print_call_stack()
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
