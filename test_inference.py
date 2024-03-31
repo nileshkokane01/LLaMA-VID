@@ -14,6 +14,14 @@ import requests
 from PIL import Image
 from io import BytesIO
 from transformers import TextStreamer
+import inspect
+import inspect
+
+def print_file_and_line_info():
+    frame_info = inspect.stack()[1]
+    file_name = frame_info.filename
+    line_number = frame_info.lineno
+    print("File:", file_name, "Line:", line_number)
 
 
 def load_image(image_file):
@@ -31,78 +39,34 @@ def load_video(video_path, fps=1):
     spare_frames = vr.get_batch(frame_idx).asnumpy()
     return spare_frames
 
-def tokenizer_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_INDEX, return_tensors=None):
-    prompt_chunks = [tokenizer(chunk).input_ids for chunk in prompt.split('<image>')]
+def main(args):
+    # Model
+    disable_torch_init()
 
-    def insert_separator(X, sep):
-        return [ele for sublist in zip(X, [sep]*len(X)) for ele in sublist][:-1]
+    print(args)
+    print("---------------model_path==============")
+    print(args.model_path)
+    
+    print('model_name' , model_name)
 
-    input_ids = []
-    offset = 0
-    if len(prompt_chunks) > 0 and len(prompt_chunks[0]) > 0 and prompt_chunks[0][0] == tokenizer.bos_token_id:
-        offset = 1
-        input_ids.append(prompt_chunks[0][0])
-
-    for x in insert_separator(prompt_chunks, [image_token_index] * (offset + 1)):
-        input_ids.extend(x[offset:])
-
-    if return_tensors is not None:
-        if return_tensors == 'pt':
-            return torch.tensor(input_ids, dtype=torch.long)
-        raise ValueError(f'Unsupported tensor type: {return_tensors}')
-    return input_ids
-
-
-
-model_name ="llama-vid-7b-full-336"
-if 'llama-2' in model_name.lower():
-    conv_mode = "llava_llama_2"
-elif "v1" in model_name.lower() or "vid" in model_name.lower():
-    conv_mode = "llava_v1"
-elif "mpt" in model_name.lower():
-    conv_mode = "mpt"
-else:
-    conv_mode = "llava_v0"
-
-
-
-model_name = get_model_name_from_path('llama-vid-7b-full-336')
-tokenizer, model, image_processor, context_len = load_pretrained_model('work_dirs\llama-vid\llama-vid-7b-full-336', None, model_name,  None, None)
-
-print(model_name)
-conv = conv_templates["llava_v0"].copy()
-
-inp = "Human: " + "how many cats are in the image"
-image = load_image('cats_image.jpeg')
-image_tensor = image_processor.preprocess(image, return_tensors='pt')['pixel_values'].half().cuda()
+    model_name = get_model_name_from_path(args.model_path)
+    tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, args.load_8bit, args.load_4bit)
 
 
 
 
-inp = DEFAULT_IMAGE_TOKEN + '\n' + inp
-conv.append_message(conv.roles[0], inp)
-image = None
-
-conv.append_message(conv.roles[1], None)
-prompt = conv.get_prompt()
-
-
-
-input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
-stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-keywords = [stop_str]
-stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
-streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
-
-model.update_prompt([[inp]])
-
-
-with torch.inference_mode():
-    output_ids = model.generate(
-        input_ids,
-        images=image_tensor,
-        do_sample=True,
-        temperature=0,
-        streamer=streamer,
-        use_cache=True,
-        stopping_criteria=[stopping_criteria])
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model-path", type=str, default="facebook/opt-350m")
+    parser.add_argument("--model-base", type=str, default=None)
+    parser.add_argument("--image-file", type=str, default=None)
+    parser.add_argument("--num-gpus", type=int, default=1)
+    parser.add_argument("--conv-mode", type=str, default=None)
+    parser.add_argument("--temperature", type=float, default=0.2) # set to 0.5 for video
+    parser.add_argument("--top-p", type=float, default=0.7)
+    parser.add_argument("--max-new-tokens", type=int, default=512)
+    parser.add_argument("--load-8bit", action="store_true")
+    parser.add_argument("--load-4bit", action="store_true")
+    parser.add_argument("--debug", action="store_true")
+    args = parser.parse_args()
+    main(args)
