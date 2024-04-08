@@ -45,7 +45,9 @@ def main(args):
 
     model_name = get_model_name_from_path(args.model_path)
     tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, args.load_8bit, args.load_4bit)
-
+    print('tokeenizer : ' , tokenizer ) 
+    print('model: ' , model)
+    print('image_processing ,  ' , image_processor)
     if 'llama-2' in model_name.lower():
         conv_mode = "llava_llama_2"
         print_file_and_line_info()
@@ -86,64 +88,60 @@ def main(args):
     else:
         image_tensor = None
     
-    while True:
-        try:
-            inp = input(f"{roles[0]}: ")
-        except EOFError:
-            inp = ""
-        if not inp:
-            print("exit...")
-            break
 
-        print(f"{roles[1]}: ", end="")
-        print("inp : " , inp)
-        model.update_prompt([[inp]])
+      
+    inp ='what is the image all about'
 
-        if args.image_file is not None:
-            # first message
-            if model.config.mm_use_im_start_end:
-                print_file_and_line_info()
-                inp = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + inp
-            else:
-                inp = DEFAULT_IMAGE_TOKEN + '\n' + inp
-                print_file_and_line_info()
-            conv.append_message(conv.roles[0], inp)
-            image = None
+
+    print(f"{roles[1]}: ", end="")
+    print("inp : " , inp)
+    model.update_prompt([[inp]])
+
+    if args.image_file is not None:
+        # first message
+        if model.config.mm_use_im_start_end:
+
+            inp = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + inp
         else:
-            # later messages
-            conv.append_message(conv.roles[0], inp)
-            print_file_and_line_info()
-        conv.append_message(conv.roles[1], None)
-        print_file_and_line_info()
-        prompt = conv.get_prompt()
+            inp = DEFAULT_IMAGE_TOKEN + '\n' + inp
 
-        input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
-        stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-        keywords = [stop_str]
-        stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
-        streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
-        print("input_id: " , input_ids)
-        print('temperature: ' ,  args.temperature)
-        
+        conv.append_message(conv.roles[0], inp)
+        image = None
+    else:
+        # later messages
+        conv.append_message(conv.roles[0], inp)
 
-        with torch.inference_mode():
-            output_ids = model.generate(
-                input_ids,
-                images=image_tensor,
-                do_sample=True,
-                temperature=args.temperature,
-                top_p=args.top_p,
-                max_new_tokens=args.max_new_tokens,
-                streamer=streamer,
-                use_cache=True,
-                stopping_criteria=[stopping_criteria])
+    conv.append_message(conv.roles[1], None)
+    print_file_and_line_info()
+    prompt = conv.get_prompt()
 
-        outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
-        conv.messages[-1][-1] = outputs
-        conv.messages[-2][-1] = conv.messages[-2][-1].replace(DEFAULT_IMAGE_TOKEN+'\n','')
+    input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).cuda()
+    stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+    keywords = [stop_str]
+    stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
+    streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    print("input_id: " , input_ids)
+    print('temperature: ' ,  args.temperature)
+    print('top_p' ,args.top_p)
+    print('max_new_tokens: ' , args.max_new_tokens)
+    with torch.inference_mode():
+        output_ids = model.generate(
+            input_ids,
+            images=image_tensor,
+            do_sample=True,
+            temperature=args.temperature,
+            top_p=args.top_p,
+            max_new_tokens=args.max_new_tokens,
+            streamer=streamer,
+            use_cache=True,
+            stopping_criteria=[stopping_criteria])
 
-        if args.debug:
-            print("\n", {"prompt": prompt, "outputs": outputs}, "\n")
+    outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
+    conv.messages[-1][-1] = outputs
+    conv.messages[-2][-1] = conv.messages[-2][-1].replace(DEFAULT_IMAGE_TOKEN+'\n','')
+
+    if args.debug:
+        print("\n", {"prompt": prompt, "outputs": outputs}, "\n")
 
 
 if __name__ == "__main__":

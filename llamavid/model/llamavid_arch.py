@@ -270,6 +270,8 @@ class LLaMAVIDMetaForCausalLM(ABC):
         total_count = 0
         # calculate each image feat according to the prompt
         for _idx in range(len(prompts)):
+            print("vlm_attention prompt before the bert-qformer")
+            print('vlm_attention ' , prompts[_idx])
             assert isinstance(prompts[_idx], list), f"Prompt should be a list, but got {type(prompts[_idx])}"
             input_token = self.get_model().vlm_att_tokenlizer(
                 prompts[_idx], 
@@ -296,24 +298,33 @@ class LLaMAVIDMetaForCausalLM(ABC):
                 total_count += image_counts[_idx]
             
             if "pretrain" in self.config.bert_type and self.get_model().vlm_att_bert_proj is not None:
+                print('vlm_attention  :  bert_proj')
                 bert_feat = self.get_model().vlm_att_bert_proj(img_feat_prompt)
             else:
                 bert_feat = img_feat_prompt.clone()
 
             # remove cls embedding
             if self.config.mm_vision_select_feature == 'patch':
+                print('vlm_attention patch')
                 if img_feat_prompt.shape[1]%2 == 1:
                     img_feat_prompt = img_feat_prompt[:, 1:]
 
             if "qformer" in self.config.bert_type:
+                print('vlm_attention :  qformer')
                 query_tokens = self.get_model().vlm_att_query.expand(bert_feat.shape[0], -1, -1)
                 query_atts = torch.cat([torch.ones(query_tokens.size()[:-1], dtype=torch.long).to(bert_feat.device), 
                                         attention_masks],dim=1)
                 
                 if 'pretrain' in self.config.bert_type:
+                    print('vlm_attention : pretrain')
                     mm_img_in = self.get_model().vlm_att_ln(bert_feat)
                 else:
                     mm_img_in = bert_feat
+
+                print('vlm_attention : query_tokens' , query_tokens)
+                print('vlm_attention : query_attention' ,  query_atts)
+                print('vlm_attention : mm_img_in',  mm_img_in)
+                print('vlm_attention :  image_att_prompt ' , img_att_prompt )
                 
                 if long_video:
                     outputs = []
@@ -333,6 +344,11 @@ class LLaMAVIDMetaForCausalLM(ABC):
                     mm_output = torch.cat(outputs)
                     torch.cuda.empty_cache()
                 else:
+
+                    print('vlm_attention : query_tokens' , query_tokens)
+                    print('vlm_attention : query_attention' ,  query_atts)
+                    print('vlm_attention : mm_img_in',  mm_img_in)
+                    print('vlm_attention :  image_att_prompt ' , img_att_prompt )
                     mm_output = self.get_model().vlm_att_encoder.bert(
                         input_ids,
                         query_embeds=query_tokens,
@@ -344,6 +360,12 @@ class LLaMAVIDMetaForCausalLM(ABC):
                     mm_output = mm_output.last_hidden_state[:,:query_tokens.shape[1]]
                 
             elif "raw" in self.config.bert_type:
+                print('vlm_attention :  raw ')
+                
+                print('vlm_attention : input_ids' , input_ids)
+                print('vlm_attention : attention_masks' ,  attention_masks)
+                print('vlm_attention : encoder_hidden_states',  self.get_model().vlm_att_bert_proj(bert_feat))
+                print('vlm_attention :  image_att_prompt ' , img_att_prompt )
                 if self.config.mm_vision_select_feature == 'patch' and bert_feat.shape[1]%2 == 1:
                     bert_feat = bert_feat[:, 1:]
                     img_att_prompt = img_att_prompt[:, 1:]
@@ -361,7 +383,8 @@ class LLaMAVIDMetaForCausalLM(ABC):
             
             text_q = self.get_model().vlm_att_projector(mm_output)
             final_token = self.token_generation(text_q, img_feat_prompt, long_video=long_video)
-
+            print('img_att_prompt : text_q' , text_q)
+            print('img_att_prompt :  final_token' , final_token)
             if image_counts is not None:
                 # shape: [prompt_num, frame_num*image_shape, feat_dim]
                 final_token = final_token.reshape(len(prompts[_idx]), image_counts[_idx], *final_token.shape[-2:])
@@ -419,8 +442,15 @@ class LLaMAVIDMetaForCausalLM(ABC):
     ): 
         if prompts is None and hasattr(self, 'prompts'):
             prompts = self.prompts
-        
+        print('prepare_inputs_labels_for_multimodal : input_ids : ' , input_ids)
+        print('prepare_inputs_labels_for_multimodal:  attention_mask' ,  attention_mask)
+        print('prepare_inputs_labels_for_multimodal:  past_keys_values' , past_key_values)
+        print('prepare_inputs_labels_for_multimodal : labels' , labels )
+        print('prepare_inputs_labels_for_multimodal : images ', images)
+        print('prepare_inputs_labels_for_multimodal : prompt0' , prompts)
         vision_tower = self.get_vision_tower()
+        print('vision_tower : ' , vision_tower)
+        print('prompts : ' , prompts )
         if vision_tower is None or images is None or input_ids.shape[1] == 1:
             if past_key_values is not None and vision_tower is not None and images is not None and input_ids.shape[1] == 1:
                 attention_mask = torch.ones((attention_mask.shape[0], past_key_values[-1][-1].shape[-2] + 1), dtype=attention_mask.dtype, device=attention_mask.device)
@@ -441,7 +471,8 @@ class LLaMAVIDMetaForCausalLM(ABC):
             image_features = self.encode_images(concat_images, prompts, image_counts, long_video=long_video)
         else:
             image_features = self.encode_images(images, prompts, long_video=long_video)
-
+        print('prepare_inputs_labels_for_multimodal : image_features : ' , image_features)   
+        #print('prepare_inputs_labels_for_multimodal :self.get_model().embed_tokens ', self.get_model().embed_tokens)
         new_input_embeds = []
         new_labels = [] if labels is not None else None
         cur_image_idx = 0
@@ -472,6 +503,7 @@ class LLaMAVIDMetaForCausalLM(ABC):
             
             if not long_video:
                 token_idx = 0
+                print('prepare_inputs_labels_for_multimodal  not long video' )
                 while image_token_indices.numel() > 0:
                     if isinstance(image_features, list):
                         cur_image_features = image_features[cur_image_idx][token_idx]
@@ -519,6 +551,7 @@ class LLaMAVIDMetaForCausalLM(ABC):
                     cur_new_labels = torch.cat(cur_new_labels, dim=0)
                     new_labels.append(cur_new_labels)
             else:
+                print('prepare_inputs_labels_for_multimodal  long video')
                 cur_new_input_embeds = torch.Tensor(len(cur_input_ids), self.config.hidden_size).to(dtype=self.dtype, device=self.device)
                 text_token_indices = torch.where(cur_input_ids != IMAGE_TOKEN_INDEX)[0]
                 if not self.training and self.get_model().embed_tokens.weight.device != cur_input_ids.device:
