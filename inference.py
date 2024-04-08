@@ -42,8 +42,9 @@ def load_video(video_path, fps=1):
 def main(args):
     # Model
     disable_torch_init()
-
+    args.model_path = 'work_dirs/llama-vid/llama-vid-7b-full-336'
     model_name = get_model_name_from_path(args.model_path)
+    print(model_name)
     tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name, args.load_8bit, args.load_4bit)
     print('tokeenizer : ' , tokenizer ) 
     print('model: ' , model)
