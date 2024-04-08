@@ -321,10 +321,10 @@ class LLaMAVIDMetaForCausalLM(ABC):
                 else:
                     mm_img_in = bert_feat
 
-                print('vlm_attention : query_tokens' , query_tokens)
-                print('vlm_attention : query_attention' ,  query_atts)
-                print('vlm_attention : mm_img_in',  mm_img_in)
-                print('vlm_attention :  image_att_prompt ' , img_att_prompt )
+                print('vlm_attention : query_tokens' )
+                print('vlm_attention : query_attention'  )
+                print('vlm_attention : mm_img_in'  )
+                print('vlm_attention :  image_att_prompt ' )
                 
                 if long_video:
                     outputs = []
@@ -345,10 +345,10 @@ class LLaMAVIDMetaForCausalLM(ABC):
                     torch.cuda.empty_cache()
                 else:
 
-                    print('vlm_attention : query_tokens' , query_tokens)
-                    print('vlm_attention : query_attention' ,  query_atts)
-                    print('vlm_attention : mm_img_in',  mm_img_in)
-                    print('vlm_attention :  image_att_prompt ' , img_att_prompt )
+                    print('vlm_attention : query_tokens' )
+                    print('vlm_attention : query_attention'  )
+                    print('vlm_attention : mm_img_in' )
+                    print('vlm_attention :  image_att_prompt '  )
                     mm_output = self.get_model().vlm_att_encoder.bert(
                         input_ids,
                         query_embeds=query_tokens,
@@ -362,10 +362,10 @@ class LLaMAVIDMetaForCausalLM(ABC):
             elif "raw" in self.config.bert_type:
                 print('vlm_attention :  raw ')
                 
-                print('vlm_attention : input_ids' , input_ids)
-                print('vlm_attention : attention_masks' ,  attention_masks)
-                print('vlm_attention : encoder_hidden_states',  self.get_model().vlm_att_bert_proj(bert_feat))
-                print('vlm_attention :  image_att_prompt ' , img_att_prompt )
+                print('vlm_attention : input_ids' )
+                print('vlm_attention : attention_masks' )
+                print('vlm_attention : encoder_hidden_states')
+                print('vlm_attention :  image_att_prompt '  )
                 if self.config.mm_vision_select_feature == 'patch' and bert_feat.shape[1]%2 == 1:
                     bert_feat = bert_feat[:, 1:]
                     img_att_prompt = img_att_prompt[:, 1:]
@@ -383,8 +383,8 @@ class LLaMAVIDMetaForCausalLM(ABC):
             
             text_q = self.get_model().vlm_att_projector(mm_output)
             final_token = self.token_generation(text_q, img_feat_prompt, long_video=long_video)
-            print('img_att_prompt : text_q' , text_q)
-            print('img_att_prompt :  final_token' , final_token)
+            print('img_att_prompt : text_q' )
+            print('img_att_prompt :  final_token')
             if image_counts is not None:
                 # shape: [prompt_num, frame_num*image_shape, feat_dim]
                 final_token = final_token.reshape(len(prompts[_idx]), image_counts[_idx], *final_token.shape[-2:])
@@ -471,7 +471,7 @@ class LLaMAVIDMetaForCausalLM(ABC):
             image_features = self.encode_images(concat_images, prompts, image_counts, long_video=long_video)
         else:
             image_features = self.encode_images(images, prompts, long_video=long_video)
-        print('prepare_inputs_labels_for_multimodal : image_features : ' , image_features)   
+        print('prepare_inputs_labels_for_multimodal : image_features ')   
         #print('prepare_inputs_labels_for_multimodal :self.get_model().embed_tokens ', self.get_model().embed_tokens)
         new_input_embeds = []
         new_labels = [] if labels is not None else None
