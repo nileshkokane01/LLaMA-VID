@@ -443,8 +443,8 @@ class LLaMAVIDMetaForCausalLM(ABC):
         if prompts is None and hasattr(self, 'prompts'):
             prompts = self.prompts
         print('prepare_inputs_labels_for_multimodal : input_ids : ' , input_ids)
-        print('prepare_inputs_labels_for_multimodal:  attention_mask' ,  attention_mask)
-        print('prepare_inputs_labels_for_multimodal:  past_keys_values' , past_key_values)
+        print('prepare_inputs_labels_for_multimodal:  attention_mask' )
+        print('prepare_inputs_labels_for_multimodal:  past_keys_values' )
         print('prepare_inputs_labels_for_multimodal : labels' , labels )
         print('prepare_inputs_labels_for_multimodal : images ', images)
         print('prepare_inputs_labels_for_multimodal : prompt0' , prompts)

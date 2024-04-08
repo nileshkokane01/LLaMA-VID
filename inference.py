@@ -48,6 +48,16 @@ def main(args):
     print('tokeenizer : ' , tokenizer ) 
     print('model: ' , model)
     print('image_processing ,  ' , image_processor)
+
+
+    '''
+    
+    
+    
+    
+    
+    
+   
     if 'llama-2' in model_name.lower():
         conv_mode = "llava_llama_2"
         print_file_and_line_info()
@@ -142,7 +152,7 @@ def main(args):
 
     if args.debug:
         print("\n", {"prompt": prompt, "outputs": outputs}, "\n")
-
+    '''
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
