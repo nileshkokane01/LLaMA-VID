@@ -18,6 +18,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
+import numpy as np
 
 from transformers import AutoConfig, AutoModelForCausalLM, \
                          LlamaConfig, LlamaModel, LlamaForCausalLM
@@ -83,6 +84,7 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, LLaMAVIDMetaForCausalLM):
                 images[0] = images[0].to(device=self.device)
             if input_ids.device != self.device:
                 input_ids = input_ids.to(device=self.device)
+                
 
         input_ids, attention_mask, past_key_values, inputs_embeds, labels = self.prepare_inputs_labels_for_multimodal(input_ids, attention_mask, past_key_values, labels, images, prompts=prompts)
         print('LlavaLlamaAttForCausalLM :  input_ids ' , input_ids)
@@ -94,8 +96,14 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, LLaMAVIDMetaForCausalLM):
         print('LlavaLlamaAttForCausalLM :  output_hidden_states ' )
         print('LlavaLlamaAttForCausalLM :  return_dict ' )
         torch.cuda.empty_cache()
-
+        #inputs_embeds =  inputs_embeds.to('cuda')
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
+
+        
+        dummp  = inputs_embeds.reshape(-1, inputs_embeds.shape[-1]).detach().cpu()
+        np.savetxt('C:\\Users\\niles\\OneDrive\\Desktop\\Data\\code\\transformers\\llama_to_llm_org.txt', dummp.numpy(),fmt='%.3f', delimiter='\t')
+
+
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -157,5 +165,9 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, LLaMAVIDMetaForCausalLM):
         )
         return model_inputs
 
+
+'''
 AutoConfig.register("llava", LlavaConfig)
 AutoModelForCausalLM.register(LlavaConfig, LlavaLlamaAttForCausalLM)
+'''
+

@@ -45,6 +45,7 @@ class LLaMAVIDMetaModel:
         if hasattr(config, "mm_vision_tower"):
             self.vision_tower = build_vision_tower(config, delay_load=True)
             self.mm_projector = build_vision_projector(config)
+        
 
     def get_vision_tower(self):
         vision_tower = getattr(self, 'vision_tower', None)
@@ -89,6 +90,78 @@ class LLaMAVIDMetaModel:
 
             self.mm_projector.load_state_dict(get_w(mm_projector_weights, 'mm_projector'))
 
+
+    def initialize_attention_modules_dummy(self, model_args, for_eval=False):  
+        pretrain_mm_mlp_adapter = getattr(model_args, "pretrain_mm_mlp_adapter", None)
+        pretrain_qformer = getattr(model_args, "pretrain_qformer", None)
+        self.config.bert_type = getattr(model_args, "bert_type", "qformer")
+        self.config.num_query = getattr(model_args, "num_query", 4)
+        self.config.compress_type = getattr(model_args, "compress_type", None)
+
+        if 'pretrain' in self.config.bert_type:
+            # for qformer that use evaclip for prtrain
+            att_feat_size = 1408
+        else:
+            att_feat_size = self.config.mm_hidden_size
+        self.vlm_att_tokenlizer, self.vlm_att_encoder, self.vlm_att_query = self.init_bert(att_feat_size, truncation_side="left")
+        self.vlm_att_projector = torch.nn.Linear(self.vlm_att_encoder.config.hidden_size, self.config.mm_hidden_size)
+        self.vlm_att_key_projector  = torch.nn.Linear(self.config.mm_hidden_size, self.config.mm_hidden_size)
+        self.vlm_att_val_projector  = torch.nn.Linear(self.config.mm_hidden_size, self.config.hidden_size)
+
+        if "raw" in self.config.bert_type:
+            self.vlm_att_bert_proj  = torch.nn.Linear(att_feat_size, self.vlm_att_encoder.config.hidden_size)
+        elif "pretrain" in self.config.bert_type and self.config.mm_hidden_size!=att_feat_size:
+            self.vlm_att_bert_proj = torch.nn.Linear(self.config.mm_hidden_size, att_feat_size)
+        else:
+            self.vlm_att_bert_proj = None
+        
+        def get_w(weights, keyword):
+            return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
+        
+        if 'qformer_pretrain' in self.config.bert_type:
+            self.vlm_att_ln = torch.nn.LayerNorm(att_feat_size).to('cpu')
+        
+        if pretrain_qformer is not None:
+            print("Loading pretrained qformer weights...")
+            qformer_weight = torch.load(pretrain_qformer, map_location='cpu')['model']
+            bert_weight = {_key: qformer_weight[_key] for _key in qformer_weight if 'bert' in _key}
+            self.vlm_att_encoder.load_state_dict(get_w(bert_weight, 'Qformer'))
+            self.vlm_att_ln.load_state_dict(get_w(qformer_weight, 'ln_vision'))
+            self.vlm_att_query.data = qformer_weight['query_tokens']
+        
+        if 'freeze_all' in self.config.bert_type:
+            print("Freezing all qformer weights...")
+            self.vlm_att_encoder.requires_grad_(False)
+            self.vlm_att_ln.requires_grad_(False)
+            self.vlm_att_query.requires_grad_(False)
+            self.vlm_att_projector.requires_grad_(False)
+            self.vlm_att_key_projector.requires_grad_(False)
+            self.vlm_att_val_projector.requires_grad_(False)
+        elif 'freeze' in self.config.bert_type:
+            print("Freezing pretrained qformer weights...")
+            self.vlm_att_encoder.requires_grad_(False)
+            self.vlm_att_ln.requires_grad_(False)
+            self.vlm_att_query.requires_grad_(False)
+        
+
+        if pretrain_mm_mlp_adapter is not None:
+            att_projector_weights = torch.load(pretrain_mm_mlp_adapter, map_location='cpu')
+        else:
+            trainable_module = ['vlm_att_encoder', 'vlm_att_projector', 'vlm_att_key_projector', 
+                                'vlm_att_val_projector', 'vlm_att_query', 'vlm_att_visual_proj',
+                                'vlm_att_ln']
+            if hasattr(model_args, 'model_name_or_path'):
+                model_save_path = model_args.model_name_or_path
+            else:
+                model_save_path = model_args.model_path
+            model_idx_path = getattr(model_args, 'model_path', model_save_path)
+            weight_file = json.load(open(os.path.join(model_idx_path, 'pytorch_model.bin.index.json'), 'r'))['weight_map']
+            model_path = set([weight_file[_key] for _key in weight_file if any([_module in _key for _module in trainable_module])])
+            att_projector_weights = {}
+            
+        
+        
+
     def initialize_attention_modules(self, model_args, for_eval=False):  
         pretrain_mm_mlp_adapter = getattr(model_args, "pretrain_mm_mlp_adapter", None)
         pretrain_qformer = getattr(model_args, "pretrain_qformer", None)
@@ -117,7 +190,7 @@ class LLaMAVIDMetaModel:
             return {k.split(keyword + '.')[1]: v for k, v in weights.items() if keyword in k}
         
         if 'qformer_pretrain' in self.config.bert_type:
-            self.vlm_att_ln = torch.nn.LayerNorm(att_feat_size)
+            self.vlm_att_ln = torch.nn.LayerNorm(att_feat_size).to('cpu')
         
         if pretrain_qformer is not None:
             print("Loading pretrained qformer weights...")
@@ -253,6 +326,8 @@ class LLaMAVIDMetaForCausalLM(ABC):
         else:
             image_features = self.get_model().get_vision_tower()(images)
 
+
+
         image_features = self.vlm_attention(image_features, 
                                             prompts=prompts, 
                                             image_counts=image_counts,
@@ -261,6 +336,7 @@ class LLaMAVIDMetaForCausalLM(ABC):
 
     def vlm_attention(self, image_features, prompts=None, image_counts=None, long_video=False):        
         img_feat_lst = []
+
         if image_counts is None:
             assert len(image_features) == len(prompts), f"Size mismatch! image_features: {len(image_features)}, prompts: {len(prompts)}"
         else:
@@ -280,7 +356,7 @@ class LLaMAVIDMetaForCausalLM(ABC):
                 max_length=256,
                 return_tensors="pt"
                 ).to(image_features.device)
-
+         
             input_ids = input_token.input_ids
             attention_masks = input_token.attention_mask
             
@@ -299,6 +375,8 @@ class LLaMAVIDMetaForCausalLM(ABC):
             
             if "pretrain" in self.config.bert_type and self.get_model().vlm_att_bert_proj is not None:
                 print('vlm_attention  :  bert_proj')
+                #bert_feat.to_device('cpu')
+                print('vlm_attention  :  bert_proj')
                 bert_feat = self.get_model().vlm_att_bert_proj(img_feat_prompt)
             else:
                 bert_feat = img_feat_prompt.clone()
@@ -309,23 +387,30 @@ class LLaMAVIDMetaForCausalLM(ABC):
                 if img_feat_prompt.shape[1]%2 == 1:
                     img_feat_prompt = img_feat_prompt[:, 1:]
 
+
             if "qformer" in self.config.bert_type:
                 print('vlm_attention :  qformer')
                 query_tokens = self.get_model().vlm_att_query.expand(bert_feat.shape[0], -1, -1)
                 query_atts = torch.cat([torch.ones(query_tokens.size()[:-1], dtype=torch.long).to(bert_feat.device), 
                                         attention_masks],dim=1)
                 
+        
                 if 'pretrain' in self.config.bert_type:
                     print('vlm_attention : pretrain')
-                    mm_img_in = self.get_model().vlm_att_ln(bert_feat)
+                    print('bert_feat  device  : ' , bert_feat.device)
+                    bert_feat = bert_feat.to('cpu')
+                    print('bert_feat  device  : ' , bert_feat.device , "dtype : " , bert_feat.dtype)
+
+                   
+                    print('bert_feat  device  : ' , bert_feat.device , "dtype : " , bert_feat.dtype)
+
+                    self.get_model().vlm_att_ln =  self.get_model().vlm_att_ln.to(device ='cpu' ,  dtype=torch.float32)
+                    mm_img_in = self.get_model().vlm_att_ln(bert_feat.type(torch.float32) )
+                    
                 else:
                     mm_img_in = bert_feat
 
-                print('vlm_attention : query_tokens' )
-                print('vlm_attention : query_attention'  )
-                print('vlm_attention : mm_img_in'  )
-                print('vlm_attention :  image_att_prompt ' )
-                
+            
                 if long_video:
                     outputs = []
                     block_size = 64
@@ -349,6 +434,8 @@ class LLaMAVIDMetaForCausalLM(ABC):
                     print('vlm_attention : query_attention'  )
                     print('vlm_attention : mm_img_in' )
                     print('vlm_attention :  image_att_prompt '  )
+
+
                     mm_output = self.get_model().vlm_att_encoder.bert(
                         input_ids,
                         query_embeds=query_tokens,
@@ -358,6 +445,7 @@ class LLaMAVIDMetaForCausalLM(ABC):
                         return_dict=True,
                     )
                     mm_output = mm_output.last_hidden_state[:,:query_tokens.shape[1]]
+
                 
             elif "raw" in self.config.bert_type:
                 print('vlm_attention :  raw ')
@@ -378,22 +466,47 @@ class LLaMAVIDMetaForCausalLM(ABC):
                     return_dict=True,
                 )
                 mm_output = mm_output.last_hidden_state
+
+
+     
             else:
                 raise ValueError(f'Unexpected bert type: {self.config.bert_type}')
             
+
+            
+     
+            dummp  = mm_output.reshape(-1, mm_output.shape[-1]).detach().cpu()
+            np.savetxt('C:\\Users\\niles\\OneDrive\\Desktop\\Data\\code\\transformers\\llama_query_output_org.txt', dummp.numpy(),fmt='%.3f', delimiter='\t')
+
+
+      
+            self.get_model().vlm_att_projector = self.get_model().vlm_att_projector.to(device='cpu', dtype=torch.float32)
             text_q = self.get_model().vlm_att_projector(mm_output)
+
+
+
             final_token = self.token_generation(text_q, img_feat_prompt, long_video=long_video)
+
+
+            dummp  = final_token.reshape(-1, final_token.shape[-1]).detach().cpu()
+            np.savetxt('C:\\Users\\niles\\OneDrive\\Desktop\\Data\\code\\transformers\\llama_image_features_to_stack_org.txt', dummp.numpy(),fmt='%.3f', delimiter='\t')
+
+
+
             print('img_att_prompt : text_q' )
             print('img_att_prompt :  final_token')
             if image_counts is not None:
                 # shape: [prompt_num, frame_num*image_shape, feat_dim]
                 final_token = final_token.reshape(len(prompts[_idx]), image_counts[_idx], *final_token.shape[-2:])
                 final_token = final_token.flatten(1,2)
+     
             img_feat_lst.append(final_token)
 
         return img_feat_lst
 
     def token_generation(self, text_q, vis_embed, long_video=False):
+        self.get_model().vlm_att_key_projector.to(device='cpu' , dtype=torch.float32)
+        vis_embed =  vis_embed.to(device='cpu', dtype=torch.float32)
         ctx_embed = self.get_model().vlm_att_key_projector(vis_embed)
         # Key part 1: calculate context-related embedding
         ctx_embed = text_q @ ctx_embed.transpose(-1,-2) 
@@ -410,6 +523,7 @@ class LLaMAVIDMetaForCausalLM(ABC):
                 outputs.append(sub_embed)
             ctx_embed = torch.cat(outputs)
             torch.cuda.empty_cache()
+        self.get_model().vlm_att_val_projector = self.get_model().vlm_att_val_projector.to(device='cpu', dtype=torch.float32)
         ctx_embed = self.get_model().vlm_att_val_projector(ctx_embed[:,None])
 
         # Key part 2: calculate visual embedding
@@ -430,27 +544,25 @@ class LLaMAVIDMetaForCausalLM(ABC):
                 vis_embed = vis_embed.mean(dim=1, keepdim=True)
         
         # concat token in shape (B, n+1, C)
+        self.get_model().mm_projector = self.get_model().mm_projector.to(device='cpu', dtype=torch.float32)
         vis_embed = self.get_model().mm_projector(vis_embed)                
         final_token = torch.cat([ctx_embed, vis_embed], dim=1)
         return final_token
 
     def update_prompt(self, prompts=None):
         self.prompts = prompts
+        
+    def get_prompt(self,):
+        return self.prompts
 
     def prepare_inputs_labels_for_multimodal(
         self, input_ids, attention_mask, past_key_values, labels, images, prompts=None
     ): 
         if prompts is None and hasattr(self, 'prompts'):
             prompts = self.prompts
-        print('prepare_inputs_labels_for_multimodal : input_ids : ' , input_ids)
-        print('prepare_inputs_labels_for_multimodal:  attention_mask' )
-        print('prepare_inputs_labels_for_multimodal:  past_keys_values' )
-        print('prepare_inputs_labels_for_multimodal : labels' , labels )
-        print('prepare_inputs_labels_for_multimodal : images ', images)
-        print('prepare_inputs_labels_for_multimodal : prompt0' , prompts)
+
         vision_tower = self.get_vision_tower()
-        print('vision_tower : ' , vision_tower)
-        print('prompts : ' , prompts )
+
         if vision_tower is None or images is None or input_ids.shape[1] == 1:
             if past_key_values is not None and vision_tower is not None and images is not None and input_ids.shape[1] == 1:
                 attention_mask = torch.ones((attention_mask.shape[0], past_key_values[-1][-1].shape[-2] + 1), dtype=attention_mask.dtype, device=attention_mask.device)
@@ -470,8 +582,18 @@ class LLaMAVIDMetaForCausalLM(ABC):
             concat_images = torch.cat(images, dim=0)
             image_features = self.encode_images(concat_images, prompts, image_counts, long_video=long_video)
         else:
+
             image_features = self.encode_images(images, prompts, long_video=long_video)
         print('prepare_inputs_labels_for_multimodal : image_features ')   
+
+
+
+
+
+
+
+
+
         #print('prepare_inputs_labels_for_multimodal :self.get_model().embed_tokens ', self.get_model().embed_tokens)
         new_input_embeds = []
         new_labels = [] if labels is not None else None

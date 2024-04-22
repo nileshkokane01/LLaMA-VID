@@ -20,6 +20,7 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss
 import torch.nn.functional as F
+import numpy as np
 
 from transformers.activations import ACT2FN
 from transformers.file_utils import (
@@ -55,14 +56,14 @@ class BertEmbeddings(nn.Module):
         super().__init__()
         self.word_embeddings = nn.Embedding(
             config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id
-        )
+        ).to('cpu')
         self.position_embeddings = nn.Embedding(
             config.max_position_embeddings, config.hidden_size
         )
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps, device='cpu', dtype=torch.float32)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
@@ -93,6 +94,7 @@ class BertEmbeddings(nn.Module):
             ].clone()
 
         if input_ids is not None:
+            input_ids =  input_ids.to('cpu')
             embeddings = self.word_embeddings(input_ids)
             if self.position_embedding_type == "absolute":
                 position_embeddings = self.position_embeddings(position_ids)
@@ -102,7 +104,8 @@ class BertEmbeddings(nn.Module):
                 embeddings = torch.cat((query_embeds, embeddings), dim=1)
         else:
             embeddings = query_embeds
-
+        embeddings =  embeddings.to('cpu').to(dtype=torch.float32)
+        self.LayerNorm =  self.LayerNorm.to('cpu').to(dtype=torch.float32)
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -126,7 +129,7 @@ class BertSelfAttention(nn.Module):
 
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         if is_cross_attention:
-            self.key = nn.Linear(config.encoder_width, self.all_head_size)
+            self.key = nn.Linear(config.encoder_width, self.all_head_size, device='cpu')
             self.value = nn.Linear(config.encoder_width, self.all_head_size)
         else:
             self.key = nn.Linear(config.hidden_size, self.all_head_size)
@@ -181,8 +184,11 @@ class BertSelfAttention(nn.Module):
         # and values come from an encoder; the attention mask needs to be
         # such that the encoder's padding tokens are not attended to.
         is_cross_attention = encoder_hidden_states is not None
-
+        self.key= self.key.to(device='cpu', dtype=torch.float32)
+        self.value= self.value.to(device='cpu', dtype=torch.float32)
+        self.query= self.query.to(device='cpu', dtype=torch.float32)
         if is_cross_attention:
+            
             key_layer = self.transpose_for_scores(self.key(encoder_hidden_states))
             value_layer = self.transpose_for_scores(self.value(encoder_hidden_states))
             attention_mask = encoder_attention_mask
@@ -192,17 +198,30 @@ class BertSelfAttention(nn.Module):
             key_layer = torch.cat([past_key_value[0], key_layer], dim=2)
             value_layer = torch.cat([past_key_value[1], value_layer], dim=2)
         else:
+            self.key =  self.key.to(device='cpu' , dtype=torch.float32)
             key_layer = self.transpose_for_scores(self.key(hidden_states))
+            self.value= self.value.to(device='cpu' , dtype=torch.float32)
             value_layer = self.transpose_for_scores(self.value(hidden_states))
-
+        self.query = self.query.to(device='cpu', dtype=torch.float32)
+        
         mixed_query_layer = self.query(hidden_states)
 
+ 
+
         query_layer = self.transpose_for_scores(mixed_query_layer)
+
+   
+        
+  
 
         past_key_value = (key_layer, value_layer)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
+
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+
+   
+
 
         if (
             self.position_embedding_type == "relative_key"
@@ -244,6 +263,7 @@ class BertSelfAttention(nn.Module):
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
+            attention_mask =  attention_mask.to('cpu')
             attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
@@ -272,6 +292,8 @@ class BertSelfAttention(nn.Module):
         )
 
         outputs = outputs + (past_key_value,)
+
+   
         return outputs
 
 
@@ -279,12 +301,14 @@ class BertSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps).to('cpu')
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
+        self.dense = self.dense.to(device='cpu', dtype=torch.float32)
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
+        self.LayerNorm =  self.LayerNorm.to(device='cpu', dtype=torch.float32)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
@@ -356,6 +380,7 @@ class BertIntermediate(nn.Module):
             self.intermediate_act_fn = config.hidden_act
 
     def forward(self, hidden_states):
+        self.dense=  self.dense.to(device='cpu', dtype=torch.float32)
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
@@ -365,10 +390,12 @@ class BertOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps).to('cpu')
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
+        self.dense=  self.dense.to(device='cpu', dtype=torch.float32)
+        self.LayerNorm = self.LayerNorm.to(device='cpu', dtype=torch.float32)
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
@@ -612,7 +639,7 @@ class BertPredictionHeadTransform(nn.Module):
             self.transform_act_fn = ACT2FN[config.hidden_act]
         else:
             self.transform_act_fn = config.hidden_act
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps).to('cpu')
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)

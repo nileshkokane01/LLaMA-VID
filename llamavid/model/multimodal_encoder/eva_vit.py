@@ -15,6 +15,8 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import drop_path, to_2tuple, trunc_normal_
 from timm.models.registry import register_model
 from transformers import CLIPImageProcessor, CLIPVisionConfig
+import numpy as np
+from PIL import Image
 
 def _cfg(url='', **kwargs):
     return {
@@ -170,8 +172,11 @@ class Block(nn.Module):
 
     def forward(self, x, rel_pos_bias=None):
         if self.gamma_1 is None:
+
             x = x + self.drop_path(self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias))
+
             x = x + self.drop_path(self.mlp(self.norm2(x)))
+
         else:
             x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x), rel_pos_bias=rel_pos_bias))
             x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x)))
@@ -198,7 +203,11 @@ class PatchEmbed(nn.Module):
         # FIXME look at relaxing size constraints
         assert H == self.img_size[0] and W == self.img_size[1], \
             f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+
+
         x = self.proj(x).flatten(2).transpose(1, 2)
+        dummp  = x.reshape(-1, x.shape[-1]).detach().cpu()
+
         return x
 
 
@@ -320,14 +329,25 @@ class VisionTransformer(nn.Module):
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
 
     def forward_features(self, x):
+
+  
         x = self.patch_embed(x)
+
+
         batch_size, seq_len, _ = x.size()
 
         cls_tokens = self.cls_token.expand(batch_size, -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
+
         x = torch.cat((cls_tokens, x), dim=1)
+
+
         if self.pos_embed is not None:
             x = x + self.pos_embed
+
+  
+
         x = self.pos_drop(x)
+
 
         rel_pos_bias = self.rel_pos_bias() if self.rel_pos_bias is not None else None
         for blk in self.blocks:
@@ -335,6 +355,8 @@ class VisionTransformer(nn.Module):
                 x = checkpoint.checkpoint(blk, x, rel_pos_bias)
             else:
                 x = blk(x, rel_pos_bias)
+                dummp  = x.reshape(-1, x.shape[-1]).detach().cpu()
+
         return x
 #         x = self.norm(x)
 
@@ -345,6 +367,7 @@ class VisionTransformer(nn.Module):
 #             return x[:, 0]
 
     def forward(self, x):
+
         x = self.forward_features(x)
 #         x = self.head(x)
         return x
@@ -448,12 +471,14 @@ class EVAVisionTowerLavis(nn.Module):
         
     def load_model(self):
         self.image_processor = CLIPImageProcessor.from_pretrained(self.image_processor_name)
+
+
         self.vision_tower = VisionTransformer(
             img_size=self.image_processor.size['shortest_edge'],
             patch_size=self.patch_size,
             use_mean_pooling=False,
             embed_dim=self.out_channel,
-            depth=39,
+            depth=39, #4 - for dummy
             num_heads=self.out_channel//88,
             mlp_ratio=4.3637,
             qkv_bias=True,
@@ -479,6 +504,7 @@ class EVAVisionTowerLavis(nn.Module):
                 image_feature = image_forward_out.to(image.dtype)
                 image_features.append(image_feature)
         else:
+      
             image_forward_outs = self.vision_tower(images.to(device=self.device, dtype=self.dtype))
             image_features = image_forward_outs.to(images.dtype)
 
