@@ -56,8 +56,9 @@ def main(args):
     disable_torch_init()
 
     #model_name = get_model_name_from_path('work_dirs\llama-vid-7b-full-336')
-    model_name = get_model_name_from_path('work_dirs\llama-vid-7b-full-224-video-fps-1')
-    tokenizer, model, image_processor, context_len = load_pretrained_model('work_dirs\llama-vid-7b-full-224-video-fps-1', args.model_base, model_name, args.load_8bit, args.load_4bit)
+    model_name = get_model_name_from_path('work_dirs\llamavid7bfull224videofps1')
+    print(model_name)
+    tokenizer, model, image_processor, context_len = load_pretrained_model('work_dirs\llamavid7bfull224videofps1', args.model_base, model_name, args.load_8bit, args.load_4bit)
     #print('tokeenizer : ' , tokenizer ) 
 
     #model.load_state_dict(torch.load('work_dirs\\llama-vid-7b-full-336\\model.pth'))
