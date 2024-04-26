@@ -101,7 +101,7 @@ class LlavaLlamaAttForCausalLM(LlamaForCausalLM, LLaMAVIDMetaForCausalLM):
 
         
         dummp  = inputs_embeds.reshape(-1, inputs_embeds.shape[-1]).detach().cpu()
-        np.savetxt('C:\\Users\\niles\\OneDrive\\Desktop\\Data\\code\\transformers\\llama_to_llm_org.txt', dummp.numpy(),fmt='%.3f', delimiter='\t')
+        np.savetxt('llama_to_llm_org.txt', dummp.numpy(),fmt='%.3f', delimiter='\t')
 
 
         outputs = self.model(
